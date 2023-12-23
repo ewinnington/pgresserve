@@ -5,6 +5,8 @@ using System.Text;
 using System.Threading;
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Text.Json.Serialization;
+using System.Text.Json;
 
 class Program
 {
@@ -195,8 +197,70 @@ class Program
     Int32 DataTypeModifier,
     Int16 FormatCode); 
 
+    public class PostgresType
+    {
+        public Int32 Oid { get; init; }
+        public Int32? ArrayTypeOid { get; init; }
+        public string Description { get; init; }
+        public string TypeName { get; init; }
+        public Int16 TypeLength { get; init; }
+        public bool TypeByValue { get; init; }
+        public char TypeCategory { get; init; }
+        public bool TypeIsPreferred { get; init; }
+        public string TypeInput { get; init; }
+        public string TypeOutput { get; init; }
+        public string TypeReceive { get; init; }
+        public string TypeSend { get; init; }
+        public char TypeAlign { get; init; }
+        public Int32 atttypmod { get; set; } //TypeModifier
+        public Int16 formatCode { get; set; } //FormatCode 0 text, 1 binary)
+
+        public PostgresType(
+            Int32 oid,
+            Int32? arrayTypeOid,
+            string description,
+            string typeName,
+            Int16 typeLength,
+            bool typeByValue,
+            char typeCategory,
+            bool typeIsPreferred,
+            string typeInput,
+            string typeOutput,
+            string typeReceive,
+            string typeSend,
+            char typeAlign,
+            Int32 atttypmod = -1, //TypeModifier
+            Int16 formatCode = 0) //FormatCode 0 text, 1 binary)
+        {
+            Oid = oid;
+            ArrayTypeOid = arrayTypeOid;
+            Description = description;
+            TypeName = typeName;
+            TypeLength = typeLength;
+            TypeByValue = typeByValue;
+            TypeCategory = typeCategory;
+            TypeIsPreferred = typeIsPreferred;
+            TypeInput = typeInput;
+            TypeOutput = typeOutput;
+            TypeReceive = typeReceive;
+            TypeSend = typeSend;
+            TypeAlign = typeAlign;
+            this.atttypmod = atttypmod;
+            this.formatCode = formatCode;
+        }
+    }
+
+    static unsafe readonly Int16 SizeOfPointer = (Int16)sizeof(void*); //8 on 64 bit, 4 on 32 bit
+
     static void Main()
     {
+        //I'm planning on supporting a dynamic mapping of C# types to Postgresql types so I can do reflection on a c# class and serialize it
+        //therefore i load the pg_type.dat file and parse it to a datastructure
+        //it was a lot more pain than expected - it works for the current version, but I cannot be sure it will work for future versions
+        //since their dataformat has a lot of edge cases
+        Dictionary<string, PostgresType> PostgresTypesDict = new Dictionary<string, PostgresType>();
+        LoadPostgresTypes(PostgresTypesDict);
+
         // Specify the IP address and port to listen on
         IPAddress ipAddress = IPAddress.Parse("0.0.0.0");
         int port = 5432;
@@ -215,43 +279,43 @@ class Program
             Console.WriteLine("Connection accepted from {0}.", client.Client.RemoteEndPoint);
             NetworkStream stream = client.GetStream();
             bool isRunning = true;
-            while(isRunning)
+            while (isRunning)
             {
                 // Receive data from the client
                 byte[] buffer = new byte[1024];
                 int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                if(bytesRead > 0)
+                if (bytesRead > 0)
                 {
                     string receivedData = System.Text.Encoding.ASCII.GetString(buffer, 0, bytesRead);
                     Console.WriteLine("Received data from client: {0}", receivedData);
 
                     //Grand central dispatch from here
 
-                    if(isSSLRequest(buffer))
+                    if (isSSLRequest(buffer))
                     {
                         Console.WriteLine("Received SSL Request");
                         // NoSSL Negotiation
-                        stream.Write(new byte[] {(byte)'N'});
+                        stream.Write(new byte[] { (byte)'N' });
                         continue;
                     }
 
-                    if(isExit(buffer))
+                    if (isExit(buffer))
                     {
                         Console.WriteLine("Received Exit Message");
                         isRunning = false;
                         break;
                     }
 
-                    (bool isStartup, Dictionary<string,string> keyValues) = isStartupMessage(buffer);
-                    if(isStartup)
+                    (bool isStartup, Dictionary<string, string> keyValues) = isStartupMessage(buffer);
+                    if (isStartup)
                     {
                         Console.WriteLine("Received Startup Message");
-                        foreach (KeyValuePair<string,string> kvp in keyValues)
+                        foreach (KeyValuePair<string, string> kvp in keyValues)
                         {
                             Console.WriteLine("Key = {0}, Value = {1}", kvp.Key, kvp.Value);
                         }
 
-                        stream.Write(AuthenticationOk);            
+                        stream.Write(AuthenticationOk);
                         stream.Write(BackEndKey);
                         stream.Write(readyForQuery);
 
@@ -259,7 +323,7 @@ class Program
                     }
 
                     (bool isQuery, string QueryText) = isQueryMessage(buffer);
-                    if(isQuery)
+                    if (isQuery)
                     {
                         Console.WriteLine("Received Query Message : " + QueryText);
 
@@ -306,14 +370,14 @@ class Program
                         // Int16
                         // The format code being used for the field. Currently will be zero (text) or one (binary). In a RowDescription returned from the statement variant of Describe, the format code is not yet known and will always be zero.
                         using MemoryStream msRowDescription = new MemoryStream();
-                        
+
                         ColumnDescriptionPg[] columns = new ColumnDescriptionPg[] {
                             new ColumnDescriptionPg("id", 0x00, 0x00, 23, 4, -1, 0),
                             new ColumnDescriptionPg("name", 0x00, 0x00, 25, -1, -1, 0)
                         };
 
 
-                        msRowDescription.Write(new byte[] {(byte)'T'},0,1);
+                        msRowDescription.Write(new byte[] { (byte)'T' }, 0, 1);
 
                         Span<byte> Header = new byte[6];
                         BinaryPrimitives.WriteInt32BigEndian(Header, 0x00); //Length we will have to correct later
@@ -321,7 +385,7 @@ class Program
 
                         msRowDescription.Write(Header);
                         //Field 1
-                        
+
                         for (int i = 0; i < columns.Length; i++)
                         {
                             Span<byte> FieldName = Encoding.ASCII.GetBytes(columns[i].ColumnName + '\0');
@@ -339,9 +403,9 @@ class Program
 
                         byte[] rowDescription = msRowDescription.ToArray();
                         msRowDescription.Close();
-                        rowDescription[4] = (byte)(rowDescription.Length-1);
+                        rowDescription[4] = (byte)(rowDescription.Length - 1);
                         Console.WriteLine("rowDescription length = " + rowDescription.Length.ToString());
-                        for(int i = 0; i < rowDescription.Length; i++)
+                        for (int i = 0; i < rowDescription.Length; i++)
                         {
                             Console.Write("{0:X2} ", rowDescription[i]);
                         }
@@ -372,12 +436,12 @@ class Program
 
                         // Byten
                         // The value of the column, in the format indicated by the associated format code. n is the above length.
-                        for(int i = 0; i < rows.Count; i++)
+                        for (int i = 0; i < rows.Count; i++)
                         {
                             using MemoryStream msDrRow1 = new MemoryStream();
 
-                            msDrRow1.Write(new byte[] {(byte)'D'},0,1);
-                            
+                            msDrRow1.Write(new byte[] { (byte)'D' }, 0, 1);
+
                             Span<byte> rowdataheader = new byte[6];
                             BinaryPrimitives.WriteInt32BigEndian(rowdataheader.Slice(0), 0x00); //Length of field
                             BinaryPrimitives.WriteInt16BigEndian(rowdataheader.Slice(4), (Int16)nfields); //Number of fields
@@ -385,14 +449,14 @@ class Program
 
                             //how we write int32 fields
                             byte[] int32AsStringBytes = Encoding.ASCII.GetBytes(rows[i].Item1.ToString()); //What the hell, I send the int32 as a string ?
-                            Span<byte> field1 = new byte[4+int32AsStringBytes.Length];
+                            Span<byte> field1 = new byte[4 + int32AsStringBytes.Length];
                             BinaryPrimitives.WriteInt32BigEndian(field1.Slice(0), 1); //Length of field
                             int32AsStringBytes.CopyTo(field1.Slice(4));
                             msDrRow1.Write(field1);
 
                             //write string fields
                             byte[] stringData = Encoding.ASCII.GetBytes(rows[i].Item2);
-                            Span<byte> field2 = new byte[4+stringData.Length];
+                            Span<byte> field2 = new byte[4 + stringData.Length];
                             BinaryPrimitives.WriteInt32BigEndian(field2.Slice(0), stringData.Length); //Length of field
                             stringData.CopyTo(field2.Slice(4));
                             msDrRow1.Write(field2);
@@ -400,11 +464,11 @@ class Program
                             byte[] drRow1 = msDrRow1.ToArray();
 
                             msDrRow1.Close();
-                            drRow1[4] = (byte)(drRow1.Length-1);
+                            drRow1[4] = (byte)(drRow1.Length - 1);
                             stream.Write(drRow1);
 
                             Console.WriteLine("DataRow1 length = " + drRow1.Length.ToString());
-                            for(int k = 0; k < drRow1.Length;k++)
+                            for (int k = 0; k < drRow1.Length; k++)
                             {
                                 Console.Write("{0:X2} ", drRow1[k]);
                             }
@@ -439,10 +503,10 @@ class Program
 
                         using MemoryStream msCC = new MemoryStream();
 
-                        msCC.Write(new byte[] {(byte)'C'});
+                        msCC.Write(new byte[] { (byte)'C' });
                         byte[] msg = Encoding.ASCII.GetBytes("SELECT " + nRows.ToString() + '\0'); //Data
                         Span<byte> lenspan = new byte[4];
-                        BinaryPrimitives.WriteInt32BigEndian(lenspan.Slice(0), msg.Length+4);
+                        BinaryPrimitives.WriteInt32BigEndian(lenspan.Slice(0), msg.Length + 4);
                         msCC.Write(lenspan); //Length of field
                         msCC.Write(msg);
 
@@ -450,7 +514,7 @@ class Program
                         msCC.Close();
 
                         Console.WriteLine("cc length = " + cc.Length.ToString());
-                        for(int i = 0; i < cc.Length; i++)
+                        for (int i = 0; i < cc.Length; i++)
                         {
                             Console.Write("{0:X2} ", cc[i]);
                         }
@@ -461,13 +525,13 @@ class Program
                         // ReadyForQuery (B)
                         stream.Write(readyForQuery);
                         Console.WriteLine("return ready for query");
-                        continue; 
+                        continue;
                     }
 
-                    
-                    if(bytesRead > 0)
+
+                    if (bytesRead > 0)
                     {
-                        for(int i = 0; i < bytesRead; i++)
+                        for (int i = 0; i < bytesRead; i++)
                         {
                             Console.Write("{0:X2} ", buffer[i]);
                         }
@@ -475,7 +539,7 @@ class Program
                 }
 
             }
-        }  
+        }
         catch (Exception ex)
         {
             Console.WriteLine("An error occurred: {0}", ex.Message);
@@ -486,5 +550,116 @@ class Program
             // Stop listening for connections
             listener.Stop();
         }
+    }
+
+    private static void LoadPostgresTypes(Dictionary<string, PostgresType> PostgresTypesDict)
+    {
+        //I want to load the file pg_type.dat and parse it to get the data type information to a datastructure
+        string typeFile = "postgres/src/include/catalog/pg_type.dat";
+        string[] lines = System.IO.File.ReadAllLines(typeFile);
+        var cleanedLines = lines.Where(line => !line.TrimStart().StartsWith("#"));
+        string postgresqlTypesFileData = string.Join("", cleanedLines);
+        /*[{ oid => '16', array_type_oid => '1000',
+        descr => 'boolean, format \'t\'/\'f\'',
+        typname => 'bool', typlen => '1', typbyval => 't', typcategory => 'B',
+        typispreferred => 't', typinput => 'boolin', typoutput => 'boolout',
+        typreceive => 'boolrecv', typsend => 'boolsend', typalign => 'c' },*/
+
+        //https://www.postgresql.org/docs/current/catalog-pg-type.html
+
+        //I have the file loaded, it has comments with #, otherwise it is a json array of objects
+        //I want to parse it to a datastructure list of types
+
+        //1) find [
+        //2) For each { } pair, read the key and value pair parsing the => as delimiter, with the , as seperator, all keys are quoted witha single '
+        //3) create the PostgresType and append it to the list
+
+        int StartIndex = postgresqlTypesFileData.IndexOf('[');
+        int EndIndex = postgresqlTypesFileData.IndexOf(']');
+        int EndObjectIndex = -1;
+        while (EndObjectIndex <= EndIndex - 10)
+        { //10 is just a nice number to stop the loop
+            int StartObjectIndex = postgresqlTypesFileData.IndexOf('{', StartIndex);
+            EndObjectIndex = postgresqlTypesFileData.IndexOf('}', StartObjectIndex);
+            StartIndex = EndObjectIndex;
+
+            string ObjectString = postgresqlTypesFileData.Substring(StartObjectIndex + 1, EndObjectIndex - StartObjectIndex - 1);
+
+            bool inQuotes = false;
+            List<string> result = new List<string>();
+            int start = 0;
+
+            for (int current = 0; current < ObjectString.Length; current++)
+            {
+                if (ObjectString[current] == '\'')
+                {
+                    if (!(ObjectString[current - 1] == '\\' && inQuotes)) //Don't toggle if we escaped the quote in a quoted string
+                        inQuotes = !inQuotes; // toggle on/off
+                }
+                else if (ObjectString[current] == ',')
+                {
+                    if (!inQuotes)
+                    {
+                        result.Add(ObjectString.Substring(start, current - start));
+                        start = current + 1;
+                    }
+                }
+            }
+
+            // Add the last field
+            if (start < ObjectString.Length)
+            {
+                result.Add(ObjectString.Substring(start));
+            }
+
+            Dictionary<string, string> keyValues = new Dictionary<string, string>();
+
+            foreach (string ObjectStringPart in result)
+            {
+                string[] ObjectStringPartParts = ObjectStringPart.Split("=>");
+                string key = ObjectStringPartParts[0].Trim().Trim('\'');
+                string value = ObjectStringPartParts[1].Trim().Trim('\'');
+                //Console.WriteLine("key = {0}, value = {1}", key, value);
+
+                keyValues.Add(key, value);
+            }
+
+            //Now we have the keyValues, we can create the PostgresType
+            PostgresType pt = new PostgresType(
+                Int32.Parse(keyValues["oid"]),
+                keyValues.ContainsKey("array_type_oid") ? Int32.Parse(keyValues["array_type_oid"]) : null,
+                keyValues.ContainsKey("descr") ? keyValues["descr"] : "",
+                keyValues["typname"],
+                keyValues["typlen"] == "NAMEDATALEN" ? (Int16)63 : keyValues["typlen"] == "SIZEOF_POINTER" ? SizeOfPointer : Int16.Parse(keyValues["typlen"]),
+                keyValues["typbyval"] == "t",
+                keyValues["typcategory"][0],
+                keyValues.ContainsKey("typispreferred") && keyValues["typispreferred"] == "t",
+                keyValues["typinput"],
+                keyValues["typoutput"],
+                keyValues["typreceive"],
+                keyValues["typsend"],
+                keyValues["typalign"][0]
+            );
+
+            PostgresTypesDict.Add(pt.TypeName, pt);
+        }
+    }
+
+    public class ParseTree {}
+
+    private static ParseTree ParseQuery(string QueryText)
+    {
+        //https://www.postgresql.org/docs/current/sql-syntax-lexical.html
+        //I plan to parse a minimal subset of the postgresql syntax, just enough to be able to generate a where conditions on a c# collection
+
+
+        return null; 
+    }
+
+    private static ParseTree ParseQueryMinimalistSyntax(string QueryText)
+    {
+        //Since I am not restricted to the postgresql syntax, I can use a much simpler syntax that is easier to apply, 
+        //can I pass LinQ expressions to the collection instead? 
+        return null; 
     }
 }
