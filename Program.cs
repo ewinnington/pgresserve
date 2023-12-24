@@ -250,6 +250,8 @@ class Program
         }
     }
 
+    public static readonly Dictionary<Type, PostgresType> PgMappingDict = new Dictionary<Type, PostgresType>(); 
+
     static unsafe readonly Int16 SizeOfPointer = (Int16)sizeof(void*); //8 on 64 bit, 4 on 32 bit
 
     static void Main()
@@ -260,6 +262,7 @@ class Program
         //since their dataformat has a lot of edge cases
         Dictionary<string, PostgresType> PostgresTypesDict = new Dictionary<string, PostgresType>();
         LoadPostgresTypes(PostgresTypesDict);
+        MapPostgresTypesToCSharpTypes(PostgresTypesDict, PgMappingDict);
 
         // Specify the IP address and port to listen on
         IPAddress ipAddress = IPAddress.Parse("0.0.0.0");
@@ -552,6 +555,52 @@ class Program
         }
     }
 
+    private static void MapPostgresTypesToCSharpTypes(Dictionary<string, PostgresType> postgresTypesDict, Dictionary<Type, PostgresType> pgMappingDict)
+    {
+        /*Map types according to the https://stackoverflow.com/questions/845458/postgresql-and-c-sharp-datatypes answer
+        
+        Postgresql  NpgsqlDbType System.DbType Enum .NET System Type
+        ----------  ------------ ------------------ ----------------
+        int8        Bigint       Int64              Int64
+        bool        Boolean      Boolean            Boolean
+        bytea       Bytea        Binary             Byte[]
+        date        Date         Date               DateTime
+        float8      Double       Double             Double
+        int4        Integer      Int32              Int32
+        money       Money        Decimal            Decimal
+        numeric     Numeric      Decimal            Decimal
+        float4      Real         Single             Single
+        int2        Smallint     Int16              Int16
+        text        Text         String             String
+        time        Time         Time               DateTime
+        timetz      Time         Time               DateTime
+        timestamp   Timestamp    DateTime           DateTime
+        timestamptz TimestampTZ  DateTime           DateTime
+        interval    Interval     Object             TimeSpan
+        varchar     Varchar      String             String
+        inet        Inet         Object             IPAddress
+        bit         Bit          Boolean            Boolean
+        uuid        Uuid         Guid               Guid
+        array       Array        Object             Array
+        
+        other source could be: https://www.npgsql.org/doc/types/basic.html 
+        */
+
+        //Starting with these types - extend as needed
+        pgMappingDict.Add(typeof(Int64), postgresTypesDict["int8"]);
+        pgMappingDict.Add(typeof(Int32), postgresTypesDict["int4"]);
+        pgMappingDict.Add(typeof(Int16), postgresTypesDict["int2"]);
+        pgMappingDict.Add(typeof(Decimal), postgresTypesDict["numeric"]);
+        pgMappingDict.Add(typeof(Boolean), postgresTypesDict["bool"]);
+        pgMappingDict.Add(typeof(Byte[]), postgresTypesDict["bytea"]);
+        pgMappingDict.Add(typeof(String), postgresTypesDict["text"]);
+        pgMappingDict.Add(typeof(DateTime), postgresTypesDict["timestamp"]);
+        pgMappingDict.Add(typeof(Double), postgresTypesDict["float8"]);
+        pgMappingDict.Add(typeof(Single), postgresTypesDict["float4"]);
+        pgMappingDict.Add(typeof(Guid), postgresTypesDict["uuid"]);
+        pgMappingDict.Add(typeof(TimeSpan), postgresTypesDict["interval"]);
+    }
+
     private static void LoadPostgresTypes(Dictionary<string, PostgresType> PostgresTypesDict)
     {
         //I want to load the file pg_type.dat and parse it to get the data type information to a datastructure
@@ -575,7 +624,7 @@ class Program
         //3) create the PostgresType and append it to the list
 
         int StartIndex = postgresqlTypesFileData.IndexOf('[');
-        int EndIndex = postgresqlTypesFileData.IndexOf(']');
+        int EndIndex = postgresqlTypesFileData.LastIndexOf(']');
         int EndObjectIndex = -1;
         while (EndObjectIndex <= EndIndex - 10)
         { //10 is just a nice number to stop the loop
