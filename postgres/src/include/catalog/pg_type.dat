@@ -206,7 +206,7 @@
   typname => 'polygon', typlen => '-1', typbyval => 'f', typcategory => 'G',
   typinput => 'poly_in', typoutput => 'poly_out', typreceive => 'poly_recv',
   typsend => 'poly_send', typalign => 'd', typstorage => 'x' },
-{ oid => '628', array_type_oid => '629', descr => 'geometric line, formats \'{A,B,C}\'/\'[point1,point2]\'',
+{ oid => '628', array_type_oid => '629', descr => 'geometric line, formats \'[A,B,C]\'/\'[point1,point2]\'',
   typname => 'line', typlen => '24', typbyval => 'f', typcategory => 'G',
   typsubscript => 'raw_array_subscript_handler', typelem => 'float8',
   typinput => 'line_in', typoutput => 'line_out', typreceive => 'line_recv',
