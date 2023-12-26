@@ -7,6 +7,8 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Text.Json.Serialization;
 using System.Text.Json;
+using System.Runtime.InteropServices.Marshalling;
+using System.Runtime.CompilerServices;
 
 class Program
 {
@@ -254,6 +256,27 @@ class Program
 
     static unsafe readonly Int16 SizeOfPointer = (Int16)sizeof(void*); //8 on 64 bit, 4 on 32 bit
 
+    //Some sample classes for serialization as a pgtable 
+    public class Person
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public DateOnly Birthdate { get; set; }
+        public bool IsActive { get; set; }
+    }
+
+    public class EventItem
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public DateTime EventDate { get; set; }
+        public double ElapsedSeconds { get; set; }
+        public string Description { get; set; }
+        public Person ConcernedPerson { get; set; } //so I can practice returning a joined table in reflection /!\
+    }
+
+    public readonly static Dictionary<string, object> RegisteredCollections = new Dictionary<string, object>();
+
     static void Main()
     {
         //I'm planning on supporting a dynamic mapping of C# types to Postgresql types so I can do reflection on a c# class and serialize it
@@ -263,6 +286,10 @@ class Program
         Dictionary<string, PostgresType> PostgresTypesDict = new Dictionary<string, PostgresType>();
         LoadPostgresTypes(PostgresTypesDict);
         MapPostgresTypesToCSharpTypes(PostgresTypesDict, PgMappingDict);
+        RegisteCollections();
+
+        ColumnDescriptionPg pgcd = GeneratePgColumnDescriptionForClasss(new EventItem(), new string[] { "*" });
+        ColumnDescriptionPg pgcd2 = GeneratePgColumnDescriptionForClasss(new Person(), new string[] { "*" });
 
         // Specify the IP address and port to listen on
         IPAddress ipAddress = IPAddress.Parse("0.0.0.0");
@@ -555,6 +582,8 @@ class Program
         }
     }
 
+    
+
     private static void MapPostgresTypesToCSharpTypes(Dictionary<string, PostgresType> postgresTypesDict, Dictionary<Type, PostgresType> pgMappingDict)
     {
         /*Map types according to the https://stackoverflow.com/questions/845458/postgresql-and-c-sharp-datatypes answer
@@ -595,6 +624,7 @@ class Program
         pgMappingDict.Add(typeof(Byte[]), postgresTypesDict["bytea"]);
         pgMappingDict.Add(typeof(String), postgresTypesDict["text"]);
         pgMappingDict.Add(typeof(DateTime), postgresTypesDict["timestamp"]);
+        pgMappingDict.Add(typeof(DateOnly), postgresTypesDict["date"]);
         pgMappingDict.Add(typeof(Double), postgresTypesDict["float8"]);
         pgMappingDict.Add(typeof(Single), postgresTypesDict["float4"]);
         pgMappingDict.Add(typeof(Guid), postgresTypesDict["uuid"]);
@@ -694,6 +724,23 @@ class Program
         }
     }
 
+    public static ColumnDescriptionPg GeneratePgColumnDescriptionForClasss(Object target, string[] selectedFields)
+    {
+        //reflect on the class, filter by selected fields (if first string is * then all fields are selected)
+        //generate a column description for the class
+
+        //I need to know the type of the class, I can get it from the target object
+        Type targetType = target.GetType();
+        
+        var allProperties = targetType.GetProperties();
+        foreach (var f in allProperties)
+        {
+            Console.WriteLine("2: " + f.Name);
+        }
+
+        return null;
+    }
+
     public class ParseTree {}
 
     private static ParseTree ParseQuery(string QueryText)
@@ -711,4 +758,23 @@ class Program
         //can I pass LinQ expressions to the collection instead? 
         return null; 
     }
+
+    private static void RegisteCollections()
+    {
+        //Some sample data and registration of collections to query 
+        List<Person> people = new List<Person>();
+        people.Add(new Person() { Id = 1, Name = "John", Birthdate = new DateOnly(1980, 1, 1), IsActive = true });
+        people.Add(new Person() { Id = 2, Name = "Jane", Birthdate = new DateOnly(1981, 2, 2), IsActive = true });
+        people.Add(new Person() { Id = 3, Name = "Nix", Birthdate = new DateOnly(1982, 3, 3), IsActive = false });
+
+        Dictionary<int, EventItem> events = new Dictionary<int, EventItem>();
+        events.Add(1, new EventItem() { Id = 1, Name = "Event 1", EventDate = new DateTime(2021, 1, 1), ElapsedSeconds = 1.0, Description = "Event 1 description", ConcernedPerson = people[0] });
+        events.Add(2, new EventItem() { Id = 2, Name = "Event 2", EventDate = new DateTime(2021, 2, 2), ElapsedSeconds = 2.0, Description = "Event 2 description", ConcernedPerson = people[1] });
+        events.Add(3, new EventItem() { Id = 3, Name = "Evented 3", EventDate = new DateTime(2021, 3, 3), ElapsedSeconds = 3.0, Description = "Evented 3 description", ConcernedPerson = people[0] });
+
+        RegisteredCollections.Add("persons", people);
+        RegisteredCollections.Add("events", events);
+        //
+    }
 }
+
