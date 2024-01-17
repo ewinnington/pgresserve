@@ -9,6 +9,8 @@ using System.Text.Json.Serialization;
 using System.Text.Json;
 using System.Runtime.InteropServices.Marshalling;
 using System.Runtime.CompilerServices;
+using System.Data.Common;
+using System.Reflection;
 
 class Program
 {
@@ -277,6 +279,9 @@ class Program
 
     public readonly static Dictionary<string, object> RegisteredCollections = new Dictionary<string, object>();
 
+    public class rowDemo { public int id {get;set;}
+                         public string name{get;set;} }
+
     static void Main()
     {
         //I'm planning on supporting a dynamic mapping of C# types to Postgresql types so I can do reflection on a c# class and serialize it
@@ -286,10 +291,10 @@ class Program
         Dictionary<string, PostgresType> PostgresTypesDict = new Dictionary<string, PostgresType>();
         LoadPostgresTypes(PostgresTypesDict);
         MapPostgresTypesToCSharpTypes(PostgresTypesDict, PgMappingDict);
-        RegisteCollections();
+        RegisterCollections();
 
-        ColumnDescriptionPg pgcd = GeneratePgColumnDescriptionForClasss(new EventItem(), new string[] { "*" });
-        ColumnDescriptionPg pgcd2 = GeneratePgColumnDescriptionForClasss(new Person(), new string[] { "*" });
+        ColumnDescriptionPg[] pgcd = GeneratePgColumnDescriptionForClasss(new EventItem(), new string[] { "*" });
+        ColumnDescriptionPg[] pgcd2 = GeneratePgColumnDescriptionForClasss(new Person(), new string[] { "*" });
 
         // Specify the IP address and port to listen on
         IPAddress ipAddress = IPAddress.Parse("0.0.0.0");
@@ -401,11 +406,28 @@ class Program
                         // The format code being used for the field. Currently will be zero (text) or one (binary). In a RowDescription returned from the statement variant of Describe, the format code is not yet known and will always be zero.
                         using MemoryStream msRowDescription = new MemoryStream();
 
+                        /*
+                        Hardwired column generationn replaced by the reflection based one
                         ColumnDescriptionPg[] columns = new ColumnDescriptionPg[] {
                             new ColumnDescriptionPg("id", 0x00, 0x00, 23, 4, -1, 0),
                             new ColumnDescriptionPg("name", 0x00, 0x00, 25, -1, -1, 0)
                         };
+                        
+                        //rowDescription length = 51
+                        //54 00 00 00 32 00 02 69 64 00 00 00 00 00 00 00 00 00 00 17 00 04 FF FF FF FF 00 00 6E 61 6D 65 00 00 00 00 00 00 00 00 00 00 19 FF FF FF FF FF FF 00 00 
+                        */
 
+                        //create an object to get the column description from reflection
+                        //can't work on anonymous objects it seems because it makes valueTypes and reflection is difficult on them
+
+
+                        List<rowDemo> rows = new List<rowDemo>();
+                        rows.Add(new rowDemo() { id = 4, name = "four" });
+                        rows.Add(new rowDemo() { id = 6, name = "six" });
+                        int nRows = rows.Count;
+                        Console.WriteLine(rows[0].id.ToString() + " " + rows[0].name);
+                        ColumnDescriptionPg[] columns = GeneratePgColumnDescriptionForClasss(rows[0], new string[] { "*" });
+                        int nfields = columns.Length;
 
                         msRowDescription.Write(new byte[] { (byte)'T' }, 0, 1);
 
@@ -443,12 +465,6 @@ class Program
 
                         stream.Write(rowDescription);
 
-                        List<(int, string)> rows = new List<(int, string)>();
-                        rows.Add((4, "four"));
-                        rows.Add((6, "six"));
-                        int nRows = rows.Count;
-                        int nfields = 2;
-
                         // DataRow (B) 
                         // Byte1('D')
                         // Identifies the message as a data row.
@@ -478,14 +494,14 @@ class Program
                             msDrRow1.Write(rowdataheader);
 
                             //how we write int32 fields
-                            byte[] int32AsStringBytes = Encoding.ASCII.GetBytes(rows[i].Item1.ToString()); //What the hell, I send the int32 as a string ?
+                            byte[] int32AsStringBytes = Encoding.ASCII.GetBytes(rows[i].id.ToString()); //What the hell, I send the int32 as a string ?
                             Span<byte> field1 = new byte[4 + int32AsStringBytes.Length];
                             BinaryPrimitives.WriteInt32BigEndian(field1.Slice(0), 1); //Length of field
                             int32AsStringBytes.CopyTo(field1.Slice(4));
                             msDrRow1.Write(field1);
 
                             //write string fields
-                            byte[] stringData = Encoding.ASCII.GetBytes(rows[i].Item2);
+                            byte[] stringData = Encoding.ASCII.GetBytes(rows[i].name);
                             Span<byte> field2 = new byte[4 + stringData.Length];
                             BinaryPrimitives.WriteInt32BigEndian(field2.Slice(0), stringData.Length); //Length of field
                             stringData.CopyTo(field2.Slice(4));
@@ -724,21 +740,50 @@ class Program
         }
     }
 
-    public static ColumnDescriptionPg GeneratePgColumnDescriptionForClasss(Object target, string[] selectedFields)
+    public static ColumnDescriptionPg[] GeneratePgColumnDescriptionForClasss(Object target, string[] selectedFields)
     {
-        //reflect on the class, filter by selected fields (if first string is * then all fields are selected)
-        //generate a column description for the class
+        // Reflect on the class, filter by selected fields (if first string is * then all fields are selected)
+        // Generate a column description for the class
 
-        //I need to know the type of the class, I can get it from the target object
+        // I need to know the type of the class, I can get it from the target object
         Type targetType = target.GetType();
-        
-        var allProperties = targetType.GetProperties();
-        foreach (var f in allProperties)
-        {
-            Console.WriteLine("2: " + f.Name);
-        }
 
-        return null;
+        var allProperties = targetType.GetProperties();
+
+        Console.WriteLine("nProps = {0} on type {1}", allProperties.Length, targetType.Name);
+        // Get all the properties that match the selected fields if selectedFields[0] != "*", make sure fields are ordered by selectedFields order
+        var filteredProperties = selectedFields[0] == "*" ? 
+            allProperties : 
+            allProperties
+                .Where(p => selectedFields.Contains(p.Name))
+                .OrderBy(p => Array.IndexOf(selectedFields, p.Name))
+                .ToArray();
+
+        List<ColumnDescriptionPg> columnDescriptions = new List<ColumnDescriptionPg>();
+
+        foreach (var f in filteredProperties)
+        {
+            Console.WriteLine("Property name = {0}, type = {1}", f.Name, f.PropertyType);
+            //if Name contains a +, it is an Object so I can skip it for now
+            if (f.PropertyType.ToString().Contains("+"))
+            {
+                Console.WriteLine("Skipping property name = {0}, type = {1}", f.Name, f.PropertyType);
+                continue;
+            }
+
+            PostgresType ptype = PgMappingDict[f.PropertyType];    
+
+            columnDescriptions.Add(new ColumnDescriptionPg(
+                f.Name, 
+                0x00, //TableId
+                0x00, //ColumnId
+                ptype.Oid, //DataTypeId
+                ptype.TypeLength, //DataTypeSize
+                ptype.atttypmod, //DataTypeModifier
+                ptype.formatCode)); //FormatCode 0 text, 1 binary)
+        }
+    
+        return columnDescriptions.ToArray();
     }
 
     public class ParseTree {}
@@ -759,7 +804,7 @@ class Program
         return null; 
     }
 
-    private static void RegisteCollections()
+    private static void RegisterCollections()
     {
         //Some sample data and registration of collections to query 
         List<Person> people = new List<Person>();
