@@ -51,3 +51,9 @@ SELECT 1;
 ```
 
 
+To get the psql client: 
+
+```bash
+sudo apt-get update
+sudo apt-get install postgresql-client
+```
