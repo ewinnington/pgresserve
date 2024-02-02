@@ -50,6 +50,10 @@ SELECT 1;
 (2 rows)
 ```
 
+Here's the overview
+
+![image](https://github.com/ewinnington/pgresserve/assets/3533203/2c5adec6-0e27-416a-993d-54cc4ae11ffd)
+
 
 To get the psql client: 
 
@@ -57,3 +61,5 @@ To get the psql client:
 sudo apt-get update
 sudo apt-get install postgresql-client
 ```
+
+
