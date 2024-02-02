@@ -52,8 +52,31 @@ SELECT 1;
 
 Here's the overview
 
-![image](https://github.com/ewinnington/pgresserve/assets/3533203/2c5adec6-0e27-416a-993d-54cc4ae11ffd)
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as PostgreSQL Server
+    C->>+S: StartupMessage (no SSL)
+    S->>-C: NoSSL Response
+    C->>+S: Startup message
+    Note right of C: user:ew<br/>database:ew
 
+    S->>C: Authentication OK
+    S->>C: BackEndKey
+    S->>-C: ReadyForQuery
+    C->>+S: Query (SQL Command)
+    Note right of C: SELECT 1
+    S->>+C: RowDescription (Table Metadata)
+    Note left of S: Int ID, String Name
+    S->>C: DataRow (Row 1)
+    Note left of S: "4", "four"
+    S->>C: DataRow (Row 2)
+    Note left of S: "6", "six"
+    S->>C: CommandComplete (Query Executed)
+    S->>-C: ReadyForQuery
+    Note left of C: ID,Name<br>4, "four"<br>6, "six"
+    C->>+S: Exit
+```
 
 To get the psql client: 
 
